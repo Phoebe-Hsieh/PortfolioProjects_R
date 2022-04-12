@@ -1,0 +1,873 @@
+
+### Set working directory:
+```{r}
+setwd("C:/Users/PhoebeGT/Desktop/Gatech_OMs/Course/ISYE7406_DMSL/Project/Data")
+```
+
+
+### Read Data:
+```{r}
+# Data description: https://www.kaggle.com/radmirzosimov/telecom-users-dataset?select=telecom_users.csv
+
+airbnb <- read.table(file="C:/Users/PhoebeGT/Desktop/Gatech_OMs/Course/ISYE7406_DMSL/Project/Data/airbnb.csv", sep=",", header=TRUE);
+
+dim(airbnb)
+str(airbnb)
+summary(airbnb)
+```
+
+
+### Data wrangling:
+#### (I) Remove inapplicable columns:
+```{r}
+## Remove inapplicable columns:
+library(dplyr)
+airbnb = select(airbnb, -c(index))
+```
+
+
+#### (II) Check missing data:
+```{r}
+## Check missing data:
+# Check # of missing values:
+sum(is.na(airbnb))
+```
+
+
+### Split to training and test subset: use "80:20" split
+```{r}
+## sample(x, size, replace = FALSE): 
+   # replace=true:a sample may contain an element several times while another element might not occur at all.
+
+## Use "80:20" split to create training and test subset:
+n = dim(airbnb)[1]
+n1 = round(n*0.2)
+
+set.seed(123)
+
+flag <- sort(sample(n, n1, replace = FALSE))
+abtrain <- airbnb[-flag,]
+abtest <- airbnb[flag,]
+```
+
+
+## EDA (Exploratory data analysis) for the training data:
+#### Summary statistics:
+```{r}
+## Summary statistics:
+summary(abtrain)
+library(psych)
+describe(abtrain)
+
+## Explore # of observations and # of variables in subset:
+# Explore # of observations and # of variables in training set:
+dim(abtrain)
+# Explore # of observations and # of variables in test set:
+dim(abtest)
+```
+
+
+#### Correlation matrix: Examine the correlation of each variable
+ 
+```{r}
+library("Hmisc")
+CM <- rcorr(as.matrix(abtrain))
+CM
+```
+
+```{r}
+## Visualize the correlation matrix:
+ # Extract the correlation coefficients: CM$r
+ # Extract p-values: CM$P
+
+library(corrplot)
+corrplot(CM$r, type = "upper", order = "hclust", tl.cex = 0.7, 
+         tl.col = "black", tl.srt = 45)
+```
+
+ 
+```{r}
+## Visualize the correlation matrix with insignificant correlations are leaved blank:
+    # Extract the correlation coefficients: CM$r
+    # Extract p-values: CM$P
+# reference: https://rdrr.io/cran/corrplot/man/corrplot.html
+
+library(corrplot)
+
+corrplot(CM$r, type = "upper", tl.pos = "td", order = "hclust", tl.cex = 0.7, tl.col = "black", 
+         p.mat = CM$P, sig.level = 0.05, insig = "blank")
+```
+
+
+#### Examine the Collinearity of each x variable:
+
+```{r}
+## VIF threshold:
+library(car)
+model_allfactor <- lm(log_price~., data=abtrain)
+
+cat("VIF Threshold:", max(10, 1/(1-summary(model_allfactor)$r.squared)), "\n")
+
+# Calculate VIF
+vif(model_allfactor)
+```
+
+
+#### Examine the Outliers:
+ 
+```{r}
+## Calculating Cook's distances:
+cook=cooks.distance(model_allfactor)
+cook_threshold=(dim(abtrain)[1])/4
+
+## Plotting Cook's distances:
+plot(cook)
+abline(h=cook_threshold, col="red")
+
+## Identify row number of outliers:
+which.max(cook)
+```
+
+
+```{r}
+## Create new dataset and new full model:
+# Remove outlier:
+abtrain2<-abtrain[-c(1665,1318),]
+
+## Fit full model without outliers:
+model_allfactor2 <- lm(log_price~., data=abtrain2)
+
+## Compare models with and without outliers:
+summary(model_allfactor)
+summary(model_allfactor2)
+```
+
+
+### Normalized variables with skewed distribution:
+```{r}
+library(BBmisc)
+
+ab_normalized = data.frame(airbnb)
+ab_normalized[2]=normalize(ab_normalized[2], method="range", range=c(0,1))
+ab_normalized[9]=normalize(ab_normalized[9], method="range", range=c(0,1))
+ab_normalized[12]=normalize(ab_normalized[12], method="range", range=c(0,1))
+
+str(ab_normalized)
+```
+
+## Create function for Normalization:
+# reference: https://datasharkie.com/how-to-normalize-data-in-r/
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+
+### Split to training and test subset: use "80:20" split
+```{r}
+## sample(x, size, replace = FALSE): 
+   # replace=true:a sample may contain an element several times while another element might not occur at all.
+
+## Use "80:20" split to create training and test subset:
+n = dim(ab_normalized)[1]
+n1 = round(n*0.2)
+
+set.seed(123)
+
+flag <- sort(sample(n, n1, replace = FALSE))
+abtrain <- ab_normalized[-flag,]
+abtest <- ab_normalized[flag,]
+```
+
+
+### Comparison of MLR methods:
+### Check MLR Assumptions:
+```{r}
+library(MASS)
+library(car)
+
+## Standardized residuals:
+model_MLR = lm(log_price~., data=abtrain)
+resids=stdres(model_MLR)
+
+## Plot of the standardized residuals vs. fitted values
+plot(model_MLR$fitted.values, resids , xlab='Fitted Values', ylab='Standardized Residuals')
+abline(0,0,col='red')
+
+## QQplot and histogram
+par(mfrow=c(2,2))
+hist(resids,xlab='Standardized Resididuals')
+qqPlot(resids,ylab="Standardized Resididuals")
+```
+
+
+### ==== Model 1: Multiple Linear regression with all predictors ====
+```{r}
+## Model 1: Multiple Linear regression with all predictors
+model1 <- lm(log_price ~ ., data = abtrain)
+summary(model1)
+
+# Training error:
+yhat1train  <- predict(model1, abtrain[,-1])
+MSEmod1train <- mean( (yhat1train-abtrain[,1])^2 )
+MSEmod1train 
+
+# Test error:
+pred1test  <- predict(model1, abtest[,-1])
+MSEmod1test <- mean( (pred1test-abtest[,1])^2 )
+MSEmod1test
+
+summary(model1)$adj.r.squared
+```
+
+
+### ==== Model 2: Multiple Linear regression with best subset ====
+```{r}
+## Model 2: Multiple Linear regression with best subset
+# reference: https://www.rdocumentation.org/packages/leaps/versions/3.1/topics/regsubsets
+library(leaps)
+
+model2 <- regsubsets(log_price ~ ., data= abtrain, nvmax=19, nbest= 120, method= c("exhaustive"), really.big= T)
+models2 <- summary(model2)$which
+models2.size <- as.numeric(attr(models2, "dimnames")[[1]])
+models2.rss <- summary(model2)$rss
+plot( models2.size, models2.rss)
+```
+
+```{r}
+## Model selection criteria: Adjusted R2, Cp and BIC
+# reference: https://cran.r-project.org/web/packages/leaps/leaps.pdf
+# reference: http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/155-best-subsets-regression-essentials-in-r/
+library(leaps)
+model2 <- regsubsets(log_price~., data=abtrain, nvmax = 19)
+summary(model2)
+res.sum <- summary(model2)
+data.frame(R2 = which.max(res.sum$rsq),
+           Adj.R2 = which.max(res.sum$adjr2),
+           RSS =which.min(res.sum$rss),
+           CP = which.min(res.sum$cp),
+           BIC = which.min(res.sum$bic)
+)
+
+plot(res.sum$rss,xlab='No. of Variables',ylab='RSS',type='l')
+```
+
+```{r}
+## Full model, k=18:
+op2 <- which( models2.size == 18)
+flag2 <- op2[which.min( models2.rss[op2])]
+# Manual look at the selected model
+models2[flag2,]
+```
+
+```{r}
+## Reduced model, k=17:
+op2 <- which( models2.size == 17)
+flag2 <- op2[which.min( models2.rss[op2])]
+# Manual look at the selected model
+models2[flag2,]
+```
+
+```{r}
+## Reduced model, k=5:
+op2 <- which( models2.size == 5)
+flag2 <- op2[which.min( models2.rss[op2])]
+# Manual look at the selected model
+models2[flag2,]
+```
+
+```{r}
+# Full model, k=18:
+model2_full <- lm(log_price~ ., data=abtrain)
+summary(model2_full)
+
+# Training error:
+yhat2train  <- predict(model2_full, abtrain[,-1])
+MSEmod2train <- mean( (yhat2train-abtrain[,1])^2)
+MSEmod2train 
+
+# Test error:
+pred2test  <- predict(model2_full, abtest[,-1])
+MSEmod2test <- mean( (pred2test-abtest[,1])^2 )
+MSEmod2test
+
+summary(model2_full)$adj.r.squared
+```
+
+```{r}
+# Reduced model, k=17:
+model2_reduced <- lm(log_price~ .-host_identity_verified, data=abtrain)
+summary(model2_reduced)
+
+# Training error:
+yhat2train  <- predict(model2_reduced, abtrain[,-1])
+MSEmod2train <- mean( (yhat2train-abtrain[,1])^2 )
+MSEmod2train 
+
+# Test error:
+pred2test  <- predict(model2_reduced, abtest[,-1])
+MSEmod2test <- mean( (pred2test-abtest[,1])^2 )
+MSEmod2test
+
+summary(model2_reduced)$adj.r.squared
+```
+
+```{r}
+# Reduced model, k=5:
+model2_k5 <- lm(log_price~ accommodates+latitude+bedrooms+room_type_Private.room+room_type_Shared.room, data=abtrain)
+summary(model2_k5)
+
+# Training error:
+yhat2train  <- predict(model2_k5, abtrain[,-1])
+MSEmod2train <- mean( (yhat2train-abtrain[,1])^2 )
+MSEmod2train 
+
+# Test error:
+pred2test  <- predict(model2_k5, abtest[,-1])
+MSEmod2test <- mean( (pred2test-abtest[,1])^2 )
+MSEmod2test
+
+summary(model2_k5)$adj.r.squared
+```
+
+
+### ==== Model 3: Multiple Linear regression with variables (stepwise) selected using AIC ====
+```{r}
+## Model 3: Multiple Linear regression with Stepwise AIC method
+# Build the full model first:
+model1 <- lm(log_price ~ ., data = abtrain) 
+model3  <- step(model1)
+summary(model3)
+
+## Training error:
+yhat3train  <- predict(model3, abtrain[,-1])
+MSEmod3train <- mean((yhat3train-abtrain[,1])^2)
+MSEmod3train
+
+## Testing error:
+pred3 <- predict(model3, abtest[,-1])
+MSEmod3test <-   mean((pred3 - abtest[,1])^2)
+MSEmod3test
+
+summary(model3)$adj.r.squared
+```
+
+
+### Comparison of MLR methods: Cross-validation
+
+```{r}
+set.seed(123)
+B = 100
+
+n = dim(ab_normalized)[1]
+n1 = round(n*0.2)
+
+TEALL_train=NULL
+TEALL_test=NULL
+TEALL_AdjR2=NULL
+
+for (b in 1:B){
+  flag <- sort(sample(n, n1, replace = FALSE))
+  abtrain <- ab_normalized[-flag,]
+  abtest <- ab_normalized[flag,]
+
+  # Model 1: Multiple Linear Regression (MLR)
+  mod1 <- lm(log_price ~ ., data = abtrain)
+  TrainErr_mod1 <- mean((predict(mod1,abtrain[,-1])-abtrain[,1])^2)
+  TestErr_mod1 <- mean((predict(mod1,abtest[,-1])-abtest[,1])^2)
+  AdjR2_mod1 <- summary(mod1)$adj.r.squared
+  
+  # Model 2: MLR with best subset k=18
+  library(leaps)
+  model2 <- regsubsets(log_price ~ ., data= abtrain, nvmax=18, nbest= 120, method= c("exhaustive"), really.big= T)
+  models2 <- summary(model2)$which
+  models2.size <- as.numeric(attr(models2, "dimnames")[[1]])
+  models2.rss <- summary(model2)$rss
+  ## Model selection criteria: Adjusted R2, Cp and BIC
+  model2 <- regsubsets(log_price~., data=abtrain, nvmax = 18)
+  res.sum <- summary(model2)
+  op2 <- which(models2.size == 18)
+  flag2 <- op2[which.min(models2.rss[op2])]
+  ## Look at the selected model
+  ss2 <- models2[flag2,]
+  subsetd <-abtrain[,c(T,ss2[-1])]
+  ## Manual look at the selected model
+  mod2 <- lm(log_price~., data=subsetd)
+  summary(mod2)
+  TrainErr_mod2 <- mean((predict(mod2,abtrain[,-1])-abtrain[,1])^2)
+  TestErr_mod2 <- mean((predict(mod2,abtest[,-1])-abtest[,1])^2)
+  AdjR2_mod2 <- summary(mod2)$adj.r.squared
+
+  # Model 3: MLR with best subset k=17
+  library(leaps)
+  model3 <- regsubsets(log_price ~ ., data= abtrain, nvmax=17, nbest= 120, method= c("exhaustive"), really.big= T)
+  models3 <- summary(model3)$which
+  models3.size <- as.numeric(attr(models3, "dimnames")[[1]])
+  models3.rss <- summary(model3)$rss
+  ## Model selection criteria: Adjusted R2, Cp and BIC
+  model3 <- regsubsets(log_price~., data=abtrain, nvmax = 17)
+  res.sum <- summary(model3)
+  op3 <- which(models3.size == 17)
+  flag3 <- op3[which.min(models3.rss[op3])]
+  ## Look at the selected model
+  ss3 <- models3[flag3,]
+  subsetd <-abtrain[,c(T,ss3[-1])]
+  ## Manual look at the selected model
+  mod3 <- lm(log_price~., data=subsetd)
+  summary(mod3)
+  TrainErr_mod3 <- mean((predict(mod3,abtrain[,-1])-abtrain[,1])^2)
+  TestErr_mod3 <- mean((predict(mod3,abtest[,-1])-abtest[,1])^2) 
+  AdjR2_mod3 <- summary(mod3)$adj.r.squared
+  
+  # Model 4: MLR with best subset k=5
+  library(leaps)
+  model4 <- regsubsets(log_price ~ ., data= abtrain, nvmax=5, nbest= 120, method= c("exhaustive"), really.big= T)
+  models4 <- summary(model4)$which
+  models4.size <- as.numeric(attr(models4, "dimnames")[[1]])
+  models4.rss <- summary(model4)$rss
+  ## Model selection criteria: Adjusted R2, Cp and BIC
+  model4 <- regsubsets(log_price~., data=abtrain, nvmax = 5)
+  res.sum <- summary(model4)
+  op4 <- which(models4.size == 5)
+  flag4 <- op4[which.min(models4.rss[op4])]
+  ## Look at the selected model
+  ss4 <- models4[flag4,]
+  subsetd <-abtrain[,c(T,ss4[-1])]
+  ## Manual look at the selected model
+  mod4 <- lm(log_price~., data=subsetd)
+  summary(mod4)
+  TrainErr_mod4 <- mean((predict(mod4,abtrain[,-1])-abtrain[,1])^2)
+  TestErr_mod4 <- mean((predict(mod4,abtest[,-1])-abtest[,1])^2) 
+  AdjR2_mod4 <- summary(mod4)$adj.r.squared
+  
+  # Model 5: MLR with variables (stepwise) selected using AIC 
+  mod5 <- step(mod1)
+  summary(mod5)
+  TrainErr_mod5 <- mean((predict(mod5,abtrain[,-1])-abtrain[,1])^2)
+  TestErr_mod5 <- mean((predict(mod5,abtest[,-1])-abtest[,1])^2)
+  AdjR2_mod5 <- summary(mod5)$adj.r.squared
+  
+  TEALL_train = rbind(TEALL_train, cbind(TrainErr_mod1, TrainErr_mod2, TrainErr_mod3, TrainErr_mod4, TrainErr_mod5))
+  TEALL_test = rbind(TEALL_test, cbind(TestErr_mod1, TestErr_mod2, TestErr_mod3, TestErr_mod4, TestErr_mod5))
+  TEALL_AdjR2 = rbind(TEALL_AdjR2, cbind(AdjR2_mod1, AdjR2_mod2, AdjR2_mod3, AdjR2_mod4, AdjR2_mod5))
+}
+```
+
+```{r}
+## Exploratory Data Analysis:
+dim(TEALL_train)
+dim(TEALL_test)
+dim(TEALL_AdjR2)
+```
+
+```{r}
+## Compare model performance:
+# Calculate the sample mean of the testing errors for all models
+round(apply(TEALL_train, 2, mean),4)
+round(apply(TEALL_test, 2, mean),4)
+round(apply(TEALL_AdjR2, 2, mean),4)
+```
+
+
+### Comparison of other methods:
+### ==== Model 6: Ridge regression ====
+```{r}
+## Model 6: Ridge regression
+library(MASS)
+
+# Get the ridge regression for all penalty function lamdba:
+ab.ridge <- lm.ridge( log_price ~ ., data = abtrain, lambda= seq(0,100,0.001))
+
+# Ridge Regression plot how the coefficients change with values:
+matplot(ab.ridge$lambda, t(ab.ridge$coef), type="l", lty=1, 
+        xlab=expression(lambda), ylab=expression(hat(beta)))
+# Auto-find the optimal lambda value for the ridge regression model:
+indexopt <-  which.min(ab.ridge$GCV)
+indexopt
+```
+```{r}
+## Transform the coefficients to the original data:
+# sparate _0 (intercept) with other ’s:
+ridge.coeffs = ab.ridge$coef[,indexopt]/ ab.ridge$scales
+intercept = -sum( ridge.coeffs  * colMeans(abtrain[,-1] )  )+ mean(abtrain[,1])
+
+# Get the coefficients estimated from the Ridge Regression on the original data scale:
+c(intercept, ridge.coeffs)
+```
+
+```{r}
+## Training error:
+yhat6train <- as.matrix(abtrain[,-1]) %*% as.vector(ridge.coeffs) + intercept
+
+MSEmod6train <- mean((yhat6train - abtrain[,1])^2)
+MSEmod6train
+
+## Testing error:
+pred6test <- as.matrix( abtest[,-1]) %*% as.vector(ridge.coeffs) + intercept
+MSEmod6test <-  mean((pred6test - abtest[,1])^2)
+MSEmod6test
+```
+
+
+### ==== Model 7: LASSO ====
+```{r}
+## Model 7: LASSO
+library(lars)
+ab.lars <- lars( as.matrix(abtrain[,-1]), abtrain[,1], type= "lasso", trace= TRUE)
+
+# Plots for LASSO for all penalty parameters:
+plot(ab.lars)
+
+# Choose the optimal value that minimizes Mellon’s Cp criterion:
+Cp1  <- summary(ab.lars)$Cp
+index1 <- which.min(Cp1)
+
+index1
+lasso.lambda <- ab.lars$lambda[index1]
+```
+```{r}
+## Get the beta coefficient values:
+# Get the beta coefficient values (except the intercepts):
+coef.lars_exb0 <-ab.lars$beta[18,]
+coef.lars_exb0 
+
+# Get the intercept value:
+LASSOintercept = mean(abtrain[,1]) -sum( coef.lars_exb0  * colMeans(abtrain[,-1] ))
+
+# Get all beta coefficient values including intercept:
+c(LASSOintercept, coef.lars_exb0)
+```
+
+```{r}
+## Training error:
+lasso.lambda <- ab.lars$lambda[18]
+
+pred7train  <- predict(ab.lars, abtrain[,-1], s=lasso.lambda, type="fit", mode="lambda")
+yhat7train <- pred7train$fit
+MSEmod7train <- mean((yhat7train - abtrain[,1])^2)
+MSEmod7train
+
+## Test error:
+pred7test <- predict(ab.lars, abtest[,-1], s=lasso.lambda, type="fit", mode="lambda")
+yhat7test <- pred7test$fit
+MSEmod7test <- mean( (yhat7test - abtest[,1])^2)
+MSEmod7test
+```
+
+
+### ==== Model 8: Principal component regression (PCR) ====
+```{r}
+## Model 8: Principal component regression (PCR)
+library(pls)
+ab.pca <- pcr(log_price~., data=abtrain, validation="CV")
+summary(ab.pca)
+
+# Check the effects on the number of PCs:
+validationplot(ab.pca)
+
+# Auto-select # of components:
+ncompopt <- which.min(ab.pca$validation$adj)
+ncompopt
+```
+```{r}
+## Training error:
+ypred8train <- predict(ab.pca, ncomp = ncompopt, newdata = abtrain[-1])
+MSEmod8train <- mean( (ypred8train - abtrain[,1])^2)
+MSEmod8train
+
+## Test error:
+ypred8test <- predict(ab.pca, ncomp = ncompopt, newdata = abtest[-1]) 
+MSEmod8test <- mean( (ypred8test - abtest[,1])^2)
+MSEmod8test
+```
+
+
+### ==== Model 9: Partial least squares (PLS) Regression ====
+```{r}
+## Model 9: Partial least squares (PLS) Regression
+library(pls)
+ab.pls <- plsr(log_price~ ., data = abtrain, validation="CV")
+
+# Auto-select the optimal # of components of PLS:
+mod9ncompopt <- which.min(ab.pls$validation$adj);
+mod9ncompopt
+```
+```{r}
+## Training error:
+ypred9train <- predict(ab.pls, ncomp = mod9ncompopt, newdata = abtrain[-1]); 
+MSEmod9train <- mean( (ypred9train - abtrain[,1])^2)
+MSEmod9train
+
+## Test error:
+ypred9test <- predict(ab.pls, ncomp = mod9ncompopt, newdata = abtest[-1]); 
+MSEmod9test <- mean( (ypred9test - abtest[,1])^2)
+MSEmod9test
+```
+
+
+### ==== Model 10: KNN Regression  ====
+```{r}
+## Model 10: KNN Regression
+
+# knn.reg(train = ?, test = ?, y = ?, k = ?)
+
+library(FNN)
+library(MASS)
+kk <- c(1:20)
+
+training_error <- NULL
+for (i in 1:length(kk)){
+  xnew <- abtrain[,-1]
+  ypred10.train <- FNN::knn.reg(train=abtrain[,-1], test=abtrain[,-1], y=abtrain[,1], k = kk[i])$pred
+  temptrainerror <- mean( (ypred10.train - abtrain[,1])^2)
+  training_error <- c(training_error, temptrainerror)
+}
+
+test_error <- NULL
+for (i in 1:length(kk)){
+  xnew <- abtest[,-1]
+  ypred10.test <- FNN::knn.reg(train=abtrain[,-1], test=abtest[,-1], y=abtrain[,1], k = kk[i])$pred
+  temptesterror <- mean( (ypred10.test - abtest[,1])^2)
+  test_error <- c(test_error, temptesterror)
+}
+
+## Training error:
+training_error <- round(training_error,5)
+
+plot(kk, training_error, xlab="The number of k", ylab="Training error", ylim=range(0:0.4))
+axis(1, at=seq(1, 20, by=2))
+text(kk, training_error, training_error, cex=0.6, pos=2)
+
+## Test error:
+test_error <- round(test_error,5)
+
+plot(kk, test_error, xlab="The number of k", ylab="Test error", ylim=range(0:0.4))
+axis(1, at=seq(1, 20, by=2))
+text(kk, test_error, test_error, cex=0.6, pos=2)
+```
+
+```{r}
+which.min(test_error)
+training_error[9]
+test_error[9]
+```
+
+
+### ==== Model 11: A single tree: Regression tree ====
+```{r}
+## Model 11: A single tree: Regression tree
+
+## Build model:
+library(rpart)
+rpart.ab <- rpart(log_price ~ ., data=abtrain, method="anova", parms=list(split="gini"))
+summary(rpart.ab)
+```
+```{r}
+## Build the optimal tree: Choose the optimal cp value
+print(rpart.ab$cptable)
+```
+```{r}
+# Choose the optimal cp value automatically:
+opt <- which.min(rpart.ab$cptable[, "xerror"])
+cp_optimal <- rpart.ab$cptable[opt, "CP"]
+cp_optimal
+```
+```{r}
+## Plot the optimal tree
+rpart.pruned <- prune(rpart.ab, cp=cp_optimal)
+plot(rpart.pruned, compress=TRUE)
+text(rpart.pruned)
+```
+
+```{r}
+## Training error:
+# reference: https://stat.ethz.ch/R-manual/R-devel/library/rpart/html/predict.rpart.html
+y11hatc <- predict(rpart.pruned, abtrain[,-1])
+train_err11 <- mean( (y11hatc - abtrain[,1])^2)
+train_err11
+
+## Test error:
+ypred11test <- predict(rpart.pruned, abtest[,-1]) 
+MSEmod11test <- mean( (ypred11test - abtest[,1])^2)
+MSEmod11test
+```
+
+
+### ==== Model 12: Random Forest ====
+```{r}
+## Model 12: Random Forest
+
+## Build the Random Forest model:
+library(randomForest)
+rf <- randomForest(log_price ~., data=abtrain, importance=TRUE)
+
+## Check Important variables:
+importance(rf, type=2)
+varImpPlot(rf)
+```
+
+```{r}
+## Find the tuning parameter:
+# reference: https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/
+# reference: https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/tutorial-random-forest-parameter-tuning-r/tutorial/
+
+# bestmtry <- tuneRF(abtrain[,-1], abtrain[,1], stepFactor=1.5, improve=1e-5, ntree=500)
+# print(bestmtry)
+```
+
+***  Answers and explanations of the “Tune result”: the Optimal pars: mtry=4.
+
+```{r}
+## Build the optimal Random Forest: mtry=4
+library(randomForest)
+rf_optimal <- randomForest(log_price ~., data=abtrain, mtry=4, importance=TRUE)
+
+## Training error:
+y12hatc <- predict(rf_optimal, abtrain[,-1])
+train_err12 <- mean( (y12hatc - abtrain[,1])^2)
+train_err12
+
+## Test error:
+ypred12test <- predict(rf_optimal, abtest[,-1]) 
+MSEmod12test <- mean( (ypred12test - abtest[,1])^2)
+MSEmod12test
+```
+
+
+### ==== Model 13: Boosting ====
+```{r}
+## Model 13: Boosting
+
+## Build the Boosting Model:
+library(gbm)
+gbm.ab <- gbm(log_price ~ .,data=abtrain,
+              n.trees = 5000,             # The parameter 𝑴
+              shrinkage = 0.01,           # The value 𝝀 (shrinkage parameter, also known as the "learning rate" or "step-size reduction")
+              interaction.depth = 3,      # interactions between 𝑋’s:1 indicates no interaction; 2 indicates interaction between xi and xj
+              cv.folds = 10)              # change to K>0 for Cross-Validation
+
+## Find the estimated optimal number of iterations
+perf_gbm = gbm.perf(gbm.ab, method="cv") 
+perf_gbm
+```
+
+```{r}
+## Relative variable importance with the estimated optimal number of iterations:
+gbm.ab_optimal <- gbm(log_price ~ .,data=abtrain,
+                      n.trees = 1840,         # The parameter 𝑴
+                      shrinkage = 0.01,       # The value 𝝀 (shrinkage parameter, also known as the "learning rate" or "step-size reduction")
+                      interaction.depth = 3,  # interactions between 𝑋’s:1 indicates no interaction; 2 indicates interaction between xi and xj
+                      cv.folds = 10)
+summary(gbm.ab_optimal)
+```
+
+```{r}
+## Training error: With optimal tuning parameter:
+y13hatc <- predict(gbm.ab, newdata = abtrain[,-1], n.trees=perf_gbm)
+train_err13 <- mean( (y13hatc - abtrain[,1])^2)
+train_err13
+
+## Test error: With optimal tuning parameter:
+ypred13test <- predict(gbm.ab, newdata = abtest[,-1], n.trees=perf_gbm)
+MSEmod13test <- mean( (ypred13test - abtest[,1])^2)
+MSEmod13test
+```
+
+
+### Comparison of methods: Cross-validation
+
+```{r}
+set.seed(123)
+B = 100
+
+n = dim(airbnb)[1]
+n1 = round(n*0.2)
+
+TEALL_train=NULL
+TEALL_test=NULL
+
+for (b in 1:B){
+  flag <- sort(sample(n, n1, replace = FALSE))
+  abtrain <- airbnb[-flag,]
+  abtest <- airbnb[flag,]
+
+  # Model 6: Ridge regression
+  library(MASS)
+  ab.ridge <- lm.ridge(log_price ~ ., data = abtrain, lambda= seq(0,100,0.001))
+  select(ab.ridge)
+  lambdaopt <- which.min(ab.ridge$GCV)
+  ridge.coeffs <- ab.ridge$coef[,lambdaopt]/ab.ridge$scales
+  intercept = -sum( ridge.coeffs  * colMeans(abtrain[,-1] ))+ mean(abtrain[,1])
+  ## find the intercepts using ybar and xbar from training data
+  c(intercept, ridge.coeffs)
+  ## Training error and test error:
+  yhat6train <- as.matrix( abtrain[,-1]) %*% as.vector(ridge.coeffs) + intercept
+  TrainErr_mod6 <- mean((yhat6train - abtrain[,1])^2)
+  pred6test <- as.matrix( abtest[,-1]) %*% as.vector(ridge.coeffs) + intercept
+  TestErr_mod6 <-  mean((pred6test - abtest[,1])^2)
+
+  # Model 7: LASSO
+  library(lars)
+  ab.lars <- lars(as.matrix(abtrain[,-1]), abtrain[,1], type= "lasso", trace= TRUE)
+  ## select the path with the smallest Cp
+  Cp1 <- summary(ab.lars)$Cp
+  index1 <- which.min(Cp1)
+  ## Get beta values
+  coef.lars_exb0 <-ab.lars$beta[18,]
+  LASSOintercept = mean(abtrain[,1]) -sum( coef.lars_exb0  * colMeans(abtrain[,-1] ))
+  c(LASSOintercept, coef.lars_exb0)
+  ## Training error and test error:
+  lasso.lambda <- ab.lars$lambda[18]
+  pred7train  <- predict(ab.lars, abtrain[,-1], s=lasso.lambda, type="fit", mode="lambda")
+  yhat7train <- pred7train$fit
+  TrainErr_mod7 <- mean((yhat7train - abtrain[,1])^2)
+  pred7test <- predict(ab.lars, abtest[,-1], s=lasso.lambda, type="fit", mode="lambda")
+  yhat7test <- pred7test$fit
+  TestErr_mod7 <- mean( (yhat7test - abtest[,1])^2)
+
+  # Model 8: PCR
+  library(pls)
+  ab.pca <- pcr(log_price~., data=abtrain, validation="CV")
+  summary(ab.pca)
+  # Auto-select # of components:
+  ncompopt <- which.min(ab.pca$validation$adj)
+  ncompopt
+  ypred8train <- predict(ab.pca, ncomp = ncompopt, newdata = abtrain[-1])
+  TrainErr_mod8 <- mean( (ypred8train - abtrain[,1])^2)
+  ypred8test <- predict(ab.pca, ncomp = ncompopt, newdata = abtest[-1]) 
+  TestErr_mod8 <- mean( (ypred8test - abtest[,1])^2)
+
+  # Model 9: PLS
+  library(pls)
+  ab.pls <- plsr(log_price~ ., data = abtrain, validation="CV")
+  ypred9train <- predict(ab.pls, ncomp = mod9ncompopt, newdata = abtrain[-1])
+  TrainErr_mod9 <- mean( (ypred9train - abtrain[,1])^2)
+  ypred9test <- predict(ab.pls, ncomp = mod9ncompopt, newdata = abtest[-1])
+  TestErr_mod9 <- mean( (ypred9test - abtest[,1])^2)
+
+  # Model 10: KNN regression
+  library(FNN)
+  library(MASS)
+  xnew <- abtrain[,-1]
+  ypred10train <- FNN::knn.reg(train=abtrain[,-1], test=abtrain[,-1], y=abtrain[,1], k = 9)$pred
+  TrainErr_mod10 <- mean( (ypred10train - abtrain[,1])^2)
+  ypred10test <- FNN::knn.reg(train=abtrain[,-1], test=abtest[,-1], y=abtrain[,1], k = 9)$pred
+  TestErr_mod10 <- mean( (ypred10test - abtest[,1])^2)
+
+  # Combine all models:
+  TEALL_train <- rbind(TEALL_train, cbind(TrainErr_mod6, TrainErr_mod7, TrainErr_mod8, TrainErr_mod9, TrainErr_mod10))
+  TEALL_test <- rbind(TEALL_test, cbind(TestErr_mod6, TestErr_mod7, TestErr_mod8,TestErr_mod9, TestErr_mod10))
+}
+```
+
+```{r}
+## Exploratory Data Analysis:
+dim(TEALL_train)
+dim(TEALL_test)
+```
+
+```{r}
+## Compare model performance:
+# Calculate the sample mean of the testing errors for all models
+apply(TEALL_train, 2, mean)
+apply(TEALL_test, 2, mean)
+```
